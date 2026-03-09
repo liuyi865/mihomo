@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/apis"
-	sudokuobfs "github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	sudokuobfs "github.com/metacubex/mihomo/transport/sudoku/obfs/sudoku"
 )
 
 func TestPackedConnRoundTrip_WithPadding(t *testing.T) {
@@ -67,8 +66,8 @@ func TestPackedConnRoundTrip_WithPadding(t *testing.T) {
 	}
 }
 
-func newPackedConfig(table *sudokuobfs.Table) *apis.ProtocolConfig {
-	cfg := apis.DefaultConfig()
+func newPackedConfig(table *sudokuobfs.Table) *ProtocolConfig {
+	cfg := DefaultConfig()
 	cfg.Key = "sudoku-test-key"
 	cfg.Table = table
 	cfg.PaddingMin = 10
@@ -118,20 +117,25 @@ func TestPackedDownlinkSoak(t *testing.T) {
 	}
 }
 
-func runPackedTCPSession(id int, cfg *apis.ProtocolConfig, errCh chan<- error) {
+func runPackedTCPSession(id int, cfg *ProtocolConfig, errCh chan<- error) {
 	serverConn, clientConn := net.Pipe()
 	target := fmt.Sprintf("1.1.1.%d:80", (id%200)+1)
 	payload := []byte{0x42, byte(id)}
 
 	// Server side
 	go func() {
-		session, err := ServerHandshake(serverConn, cfg)
+		c, meta, err := ServerHandshake(serverConn, cfg)
 		if err != nil {
 			errCh <- fmt.Errorf("server handshake tcp: %w", err)
 			return
 		}
-		defer session.Conn.Close()
+		defer c.Close()
 
+		session, err := ReadServerSession(c, meta)
+		if err != nil {
+			errCh <- fmt.Errorf("server read session tcp: %w", err)
+			return
+		}
 		if session.Type != SessionTypeTCP {
 			errCh <- fmt.Errorf("unexpected session type: %v", session.Type)
 			return
@@ -160,8 +164,8 @@ func runPackedTCPSession(id int, cfg *apis.ProtocolConfig, errCh chan<- error) {
 		errCh <- fmt.Errorf("encode address: %w", err)
 		return
 	}
-	if _, err := cConn.Write(addrBuf); err != nil {
-		errCh <- fmt.Errorf("client send addr: %w", err)
+	if err := WriteKIPMessage(cConn, KIPTypeOpenTCP, addrBuf); err != nil {
+		errCh <- fmt.Errorf("client send open tcp: %w", err)
 		return
 	}
 
@@ -176,20 +180,25 @@ func runPackedTCPSession(id int, cfg *apis.ProtocolConfig, errCh chan<- error) {
 	}
 }
 
-func runPackedUoTSession(id int, cfg *apis.ProtocolConfig, errCh chan<- error) {
+func runPackedUoTSession(id int, cfg *ProtocolConfig, errCh chan<- error) {
 	serverConn, clientConn := net.Pipe()
 	target := "8.8.8.8:53"
 	payload := []byte{0xaa, byte(id)}
 
 	// Server side
 	go func() {
-		session, err := ServerHandshake(serverConn, cfg)
+		c, meta, err := ServerHandshake(serverConn, cfg)
 		if err != nil {
 			errCh <- fmt.Errorf("server handshake uot: %w", err)
 			return
 		}
-		defer session.Conn.Close()
+		defer c.Close()
 
+		session, err := ReadServerSession(c, meta)
+		if err != nil {
+			errCh <- fmt.Errorf("server read session uot: %w", err)
+			return
+		}
 		if session.Type != SessionTypeUoT {
 			errCh <- fmt.Errorf("unexpected session type: %v", session.Type)
 			return
@@ -209,8 +218,8 @@ func runPackedUoTSession(id int, cfg *apis.ProtocolConfig, errCh chan<- error) {
 	}
 	defer cConn.Close()
 
-	if err := WritePreface(cConn); err != nil {
-		errCh <- fmt.Errorf("client write preface: %w", err)
+	if err := WriteKIPMessage(cConn, KIPTypeStartUoT, nil); err != nil {
+		errCh <- fmt.Errorf("client start uot: %w", err)
 		return
 	}
 
